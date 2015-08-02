@@ -125,3 +125,9 @@ tests/tmp-our-output:
 
 verify: tests/tmp-our-output tests/tmp-sample-output
 	@diff -bBw tests/tmp-sample-output tests/tmp-our-output
+
+# Push sources to my Linux development machine
+PUSH_CONTENTS=traceback/
+PUSH_DEST=siyuan@centos:projects/cmu_15_410/project0/p0/traceback
+push:
+	rsync -auv --filter=':- .gitignore' $(CONTENT_TO_PUSH) $(PUSH_DEST)
