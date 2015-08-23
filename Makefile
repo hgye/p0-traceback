@@ -130,4 +130,4 @@ verify: tests/tmp-our-output tests/tmp-sample-output
 PUSH_CONTENTS=traceback/
 PUSH_DEST=siyuan@centos:projects/cmu_15_410/project0/p0/traceback
 push:
-	rsync -auv --filter=':- .gitignore' $(CONTENT_TO_PUSH) $(PUSH_DEST)
+	rsync -auv --exclude-from=.gitignore $(PUSH_CONTENTS) $(PUSH_DEST)
