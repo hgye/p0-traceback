@@ -11,6 +11,12 @@
 #include "get_next_func.h"
 #include <string.h>
 
+void print_func(FILE *fp, funcframe_t *funcframe);
+
+/**
+ * traceback一般是放在SIGSEGV的signal handler里调用的，
+ * 所以traceback里必须使用async-signal-safe的function
+ */
 void traceback(FILE *fp)
 {
 
@@ -19,15 +25,19 @@ void traceback(FILE *fp)
 	 * file that it's declared in, symtabgen won't be able to find
 	 * the symbol. So be sure to always do something with functions */
 
-    const functsym_t *pfunc = NULL;
+    funcframe_t funcframe;
+    funcframe_t *pframe = &funcframe;
     do {
-        pfunc = get_next_func();
-        if (NULL == pfunc)
-            break;
+        get_next_func(pframe);
+        print_func(fp, pframe);
 
-        fprintf(fp, "name: %s, addr: %p\n", pfunc->name, pfunc->addr);
+    } while (strncmp("main", pframe->pfunc->name, 4) != 0); 
+}
 
-    } while (strncmp("main", pfunc->name, 4) != 0);
+
+void print_func(FILE *fp, funcframe_t *pframe)
+{
+    fprintf(fp, "name: %s, addr: %p, ebp: %p\n", pframe->pfunc->name, pframe->pfunc->addr, pframe->ebp);
 }
 
 

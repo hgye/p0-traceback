@@ -13,20 +13,30 @@
 .comm  staticebp,4,4
 
 get_next_func:
-    /* 如果是第一次调用，那么staticebp为0，用traceback caller的%ebp来初始化 */
+    /* use traceback's %ebp to initialize staticebp if it's the first time calling get_next_func */
     cmpl $0x0, staticebp /* check if it's first time called by traceback */
-    ja not_first    /* staticebp里存的是栈地址，都是0xffff开头的，如果用符号比较的话永远都是小于0 */
-    movl %ebp, %edx /* 这个%ebp就是traceback的%ebp */
+    ja not_first    /* here must use unsigned jump, since staticebp contains stack address that is always negative */
+    movl %ebp, %edx
     movl %edx, staticebp
 not_first:
+
     movl staticebp, %edx
+    movl 4(%esp), %eax  /* get the struct argument */
+    movl (%edx), %ecx
+    movl %ecx, (%eax)  /* save caller frame pointer to argument */
+
+
     movl 4(%edx), %ecx /* get return address of traceback caller */
     pushl %ecx
     call find_caller  /* here should return caller of traceback */
     addl $0x4, %esp   /* IMPORTANT: pop the arguments pushed for find_caller(), or
                          the argument would be the return address of get_next_func() */
 
-    movl (%edx), %ecx /* 更新staticebp成bar()的%ebp */
+    movl 4(%esp), %edx
+    movl %eax, 4(%edx) /* save functsym_t* to argument */
+
+    movl staticebp, %edx
+    movl (%edx), %ecx /* update staticebp to next caller's %ebp */
     movl %ecx, staticebp
     ret
 
