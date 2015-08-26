@@ -5,12 +5,13 @@ extern const functsym_t functions[FUNCTS_MAX_NUM];
 
 
 /**
- * find the owner function of the return address
+ * Find the owner function of the return address
+ * TODO: need to check if *addr* is a valid return address
  */
 const functsym_t* find_caller(void *addr)
 {
     int i;
-    /* 编译的时候指定了-m32，所以是32位地址，用32位整数足以 */
+    /* since target architecture is 32bit, use unsigned int to hold address is ok */
     uint32_t funcaddr;
     uint32_t maxaddr = 0;
 

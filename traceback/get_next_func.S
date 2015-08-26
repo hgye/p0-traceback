@@ -34,6 +34,7 @@ not_first:
 
     movl 4(%esp), %edx
     movl %eax, 4(%edx) /* save functsym_t* to argument */
+    movl %ecx, 8(%edx) /* save return address to argument */
 
     movl staticebp, %edx
     movl (%edx), %ecx /* update staticebp to next caller's %ebp */

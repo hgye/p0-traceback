@@ -10,6 +10,7 @@
 typedef struct funcframe_t {
     void *ebp;  /* frame pointer */
     const functsym_t* pfunc;
+    void *retaddr;  /* return address */
 } funcframe_t;
 
 void get_next_func(funcframe_t *funcframe);
