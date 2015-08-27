@@ -6,7 +6,6 @@
  *  @author Harry Q. Bovik (hqbovik)
  *  @bug Unimplemented
  */
-
 #include "traceback_internal.h"
 #include "get_next_func.h"
 #include <string.h>
@@ -14,6 +13,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdint.h>
+#include <errno.h>
+#include <time.h>
 
 #define ARG_BUF_LEN 256
 #define LINE_BUF_LEN 2048
@@ -22,13 +23,21 @@
 #define STR_LEN_LIMIT 25
 #define STR_ARRAY_LIMIT 4
 
-void print_func(FILE *fp, funcframe_t *funcframe);
+void print_func(int fd, funcframe_t *pframe);
 int is_printable(const char *s, int* toolong);
-int fill_arg_buf(char *buf, const int len, const argsym_t *arg, void *ebp);
-void proc_str(char *buf, const int len, const char *name, const char *str);
+void proc_arg(char *buf, const int len, const argsym_t *arg, void *ebp);
+void proc_str(char *buf, const int len, const char *name, char *str);
 void proc_str_arr(char *buf, const int len, const char *name, char **ss);
 
-void print_func_test(FILE *fp, funcframe_t *pframe);
+int check_pointer(const void *p);
+static int g_tmpfd = -1;    /* fd used by check_pointer */
+
+void fatal(int fd, char *msg, int err)
+{
+    char linebuf[1024] = {0};
+    snprintf(linebuf, 1024, "FATAL: %s:%s\n", msg, strerror(err));
+    write(fd, linebuf, strlen(linebuf));
+}
 
 /**
  * traceback一般是放在SIGSEGV的signal handler里调用的，
@@ -36,41 +45,41 @@ void print_func_test(FILE *fp, funcframe_t *pframe);
  */
 void traceback(FILE *fp)
 {
+    char tmpfile[40] = {0};
+    int fd;
 
-	/* the following just makes a sample access to "functions" array.
-	 * note if "functions" is not referenced somewhere outside the
-	 * file that it's declared in, symtabgen won't be able to find
-	 * the symbol. So be sure to always do something with functions */
+    if ((fd = fileno(fp)) < 0) {
+        fprintf(fp, "FATAL: fp to descriptor fail: %s\n", strerror(errno));
+        return;
+    }
+
+    snprintf(tmpfile, 50, "/tmp/traceback-tmpfile-%d", getuid());
+    g_tmpfd = open(tmpfile, O_CREAT | O_TRUNC | O_RDWR, 0644);
+    if (g_tmpfd < 0) {
+        fatal(fd, "cannot open temp file", errno);
+        return;
+    }
 
     funcframe_t funcframe;
     funcframe_t *pframe = &funcframe;
 
     do {
         get_next_func(pframe);
-        print_func(fp, pframe);
+        print_func(fd, pframe);
 
-    } while (strncmp("main", pframe->pfunc->name, 4) != 0);
+    } while (pframe->pfunc == NULL || strncmp("main", pframe->pfunc->name, 4) != 0);
 }
 
-void print_func_test(FILE *fp, funcframe_t *pframe)
-{
-    const functsym_t *pfunc = pframe->pfunc;
-    fprintf(fp, "name:%s, ebp:%p, retaddr:%p\n", pfunc->name, pframe->ebp, pframe->retaddr);
-}
-
-
-void print_func(FILE *fp, funcframe_t *pframe)
+/**
+ * print the function name and its arguments
+ */
+void print_func(int fd, funcframe_t *pframe)
 {
     char linebuf[LINE_BUF_LEN] = {0};
     char argbuf[ARG_BUF_LEN] = {0};
     const argsym_t *arg;
-    int fd, i, buflen;
+    int i, buflen;
 
-    if ((fd = fileno(fp)) < 0) {
-        snprintf(linebuf, LINE_BUF_LEN, "FATAL: fp is not a valid stream\n");
-        write(fd, linebuf, strlen(linebuf));
-        return;
-    }
 
     if (NULL == pframe->pfunc) {
         snprintf(linebuf, LINE_BUF_LEN, "Function %p(...), in\n", pframe->retaddr);
@@ -84,22 +93,22 @@ void print_func(FILE *fp, funcframe_t *pframe)
         if (strlen(arg->name) == 0)
             break;
 
-        fill_arg_buf(argbuf, ARG_BUF_LEN, arg, pframe->ebp);
+        proc_arg(argbuf, ARG_BUF_LEN, arg, pframe->ebp);
         buflen = strlen(linebuf);
         snprintf(linebuf + buflen, LINE_BUF_LEN - buflen, (i > 0 ? ", %s" : "%s"), argbuf);
     }
-    snprintf(linebuf + strlen(linebuf), LINE_BUF_LEN - strlen(linebuf), "), in\n");
+    snprintf(linebuf + strlen(linebuf), LINE_BUF_LEN - strlen(linebuf), i == 0 ? "void), in\n" : "), in\n");
 
     write(fd, linebuf, strlen(linebuf));
 }
 
-int fill_arg_buf(char *buf, const int len, const argsym_t *arg, void *ebp)
+void proc_arg(char *buf, const int len, const argsym_t *arg, void *ebp)
 {
     char c;
     int i;
     float f;
     double d;
-    char *str;
+    char *str, **ss;
 
     switch (arg->type) {
         case TYPE_CHAR:
@@ -126,7 +135,8 @@ int fill_arg_buf(char *buf, const int len, const argsym_t *arg, void *ebp)
             proc_str(buf, len, arg->name, str);
             break;
         case TYPE_STRING_ARRAY:
-            proc_str_arr(buf, len, arg->name, *(char***)(ebp + arg->offset));
+            ss = *(char***)(ebp + arg->offset);
+            proc_str_arr(buf, len, arg->name, ss);
             break;
         case TYPE_VOIDSTAR:
             snprintf(buf, len, "void *%s=0v%x", arg->name, (uint32_t)(ebp + arg->offset));
@@ -137,17 +147,16 @@ int fill_arg_buf(char *buf, const int len, const argsym_t *arg, void *ebp)
             break;
     }
 
-    return 0;
 }
 
 
-void proc_str(char *buf, const int len, const char *name, const char *str)
+void proc_str(char *buf, const int len, const char *name, char *str)
 {
     int tmp, too_long = 0;
 
     if (NULL != name) { /* for string */
         if (!is_printable(str, &too_long))
-            snprintf(buf, len, "char *%s=\"%p\"", name, str);
+            snprintf(buf, len, "char *%s=%p", name, str);
         else {
             if (!too_long) {
                 snprintf(buf, len, "char *%s=\"%s\"", name, str);
@@ -178,7 +187,7 @@ void proc_str_arr(char *buf, const int len, const char *name, char **ss)
     char *str, *next;
     char strbuf[STR_BUF_LEN] = {0};
 
-    if (NULL == ss) {
+    if (NULL == ss || !check_pointer(ss)) {
         snprintf(buf, len, "char **%s=%p", name, ss);
         return;
     }
@@ -199,6 +208,7 @@ void proc_str_arr(char *buf, const int len, const char *name, char **ss)
 
 /**
  * check if the string has unprintable character
+ * @return 1 for printable, 0 for unprintable
  */
 int is_printable(const char *s, int* too_long)
 {
@@ -206,6 +216,9 @@ int is_printable(const char *s, int* too_long)
     int printable = 1;
     int i;
     for (i = 0; i < STR_LEN_LIMIT; i++) {
+        if (!check_pointer(s + i))
+            return 0;
+
         if ('\0' == s[i]) {
             has_null = 1;
             break;  /* reached end of string */
@@ -218,5 +231,20 @@ int is_printable(const char *s, int* too_long)
         *too_long = 1;
 
     return printable;
+}
+
+/**
+ * check if the pointer is point to a valid address
+ * @return 1 for valid, 0 for invalid
+ */
+int check_pointer(const void *p)
+{
+    int rc;
+    rc = write(g_tmpfd, p, 1);
+    /* write return -1 and set errno to EFAULT if p is a invalid address */
+    if (rc == -1 && errno == EFAULT)
+        return 0;
+
+    return 1;
 }
 
